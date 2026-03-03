@@ -5,10 +5,11 @@ It implements a lightweight RAG-style pipeline over IPC sections and court judgm
 
 ## Features
 
-- Loads corpus from `data/ipc` and `data/judgments`
-- Builds in-memory TF-IDF vectors
-- Retrieves top relevant passages for each query
-- Returns generated answer grounded in retrieved references
+- Loads legal corpus from `data/ipc` and `data/judgments`
+- Normalizes documents into a canonical legal schema (law/section/court/citation/url fields)
+- Chunks long documents for retrieval-friendly indexing
+- Uses pluggable retrieval with lexical TF-IDF active by default
+- Includes vector-retriever wiring via env config for future embedding backends
 - Supports corpus reload via API without restarting server
 
 ## Tech stack
@@ -21,7 +22,9 @@ It implements a lightweight RAG-style pipeline over IPC sections and court judgm
 
 - `cmd/server/main.go` - app entry point
 - `internal/server` - HTTP routes and handlers
-- `internal/rag` - corpus loading, indexing, retrieval, answer synthesis
+- `internal/rag` - orchestration layer: ingestion + chunking + retriever + answer synthesis
+- `internal/corpus` - canonical document model and filesystem ingestion/chunking
+- `internal/retrieval` - retriever contracts and implementations (hybrid, tfidf, vector wiring)
 - `data/ipc` - IPC source documents
 - `data/judgments` - court judgment source documents
 
@@ -39,6 +42,18 @@ Environment variables:
 
 - `PORT` (default: `5000`)
 - `NYAYA_DATA_DIR` (default: `./data`)
+- `VECTOR_BACKEND` (optional, e.g. `pgvector`)
+- `VECTOR_DSN` (optional, connection string for vector store)
+- `EMBEDDING_MODEL` (optional, default: `text-embedding-3-small`)
+- `SOURCE_SYNC_ENABLED` (optional, `true/false`, default `false`)
+- `SOURCE_SYNC_INTERVAL` (optional, Go duration, default `24h`)
+- `SOURCE_SYNC_TIMEOUT` (optional, Go duration, default `45s`)
+- `SUPREME_COURT_FEED_URL` (optional JSON endpoint for Supreme Court judgments)
+- `SUPREME_COURT_API_KEY` / `SUPREME_COURT_AUTH_TYPE` (optional auth)
+- `ECOURTS_FEED_URL` (optional JSON endpoint for eCourts judgments)
+- `ECOURTS_API_KEY` / `ECOURTS_AUTH_TYPE` (optional auth)
+- `OFFICIAL_LAW_FEED_URL` (optional JSON endpoint for official law/act sections)
+- `OFFICIAL_LAW_API_KEY` / `OFFICIAL_LAW_AUTH_TYPE` (optional auth)
 
 Windows example:
 
@@ -104,6 +119,21 @@ Place files under:
 - `data/judgments`
 
 For JSON files, common fields such as `title`, `content`, `text`, `judgment`, `summary`, `facts`, `decision` are extracted automatically.
+If present, metadata fields such as `law_name`, `section`, `court`, `date`, `citation`, `source_url` are preserved and surfaced in retrieval results.
+
+## Scheduled source sync
+
+When `SOURCE_SYNC_ENABLED=true`, backend can pull remote legal data from configured JSON feeds and write normalized records to:
+
+- `data/judgments` (Supreme Court + eCourts connectors)
+- `data/ipc` (official law connector)
+
+Startup behavior:
+
+- Attempts one initial sync (best effort)
+- Builds index from local + synced files
+- Starts periodic sync ticker
+- Reloads retrieval index automatically after successful sync
 
 ## Quick test with curl
 
